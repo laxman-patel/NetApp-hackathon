@@ -8,9 +8,9 @@ Bun.serve({
 
     if (url.pathname === "/api/dashboard") {
       try {
-        const store = JSON.parse(readFileSync("./src/dataStore.json", "utf8"));
+        const store = JSON.parse(readFileSync("./dataStore.json", "utf8"));
         const ml_predicitions = JSON.parse(
-          readFileSync("./src/predictions.json", "utf8"),
+          readFileSync("./predictions.json", "utf8"),
         );
 
         const activeMigrations = [];

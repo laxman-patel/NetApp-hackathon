@@ -75,5 +75,5 @@ if __name__ == "__main__":
         "dataset_003": predict_for_dataset("dataset_003", 0, 500)
     }
 
-    with open('src/predictions.json', 'w') as f:
+    with open('../predictions.json', 'w') as f:
         json.dump(predictions, f, indent=2)
