@@ -12,7 +12,7 @@ client.on("connect", () => {
 client.on("message", async (topic, message) => {
   const event = JSON.parse(message.toString());
 
-  const store = JSON.parse(readFileSync("./src/dataStore.json", "utf8"));
+  const store = JSON.parse(readFileSync("./../dataStore.json", "utf8"));
   const dataset = store[event.datasetId];
 
   if (dataset) {
@@ -21,7 +21,7 @@ client.on("message", async (topic, message) => {
 
     const result = classifier(dataset);
 
-    writeFileSync("./src/dataStore.json", JSON.stringify(store, null, 2));
+    writeFileSync("./../dataStore.json", JSON.stringify(store, null, 2));
 
     if (result.recommendedLocation !== dataset.currentLocation) {
       await executeMigration(

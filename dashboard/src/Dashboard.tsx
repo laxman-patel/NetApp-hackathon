@@ -1,474 +1,377 @@
-import React, { useEffect, useState, useCallback } from "react";
+import React, { useEffect, useState } from "react";
 import {
   Card,
   CardContent,
   CardDescription,
   CardHeader,
   CardTitle,
-} from "./components/ui/card";
-import { Badge } from "./components/ui/badge";
-import { Button } from "./components/ui/button";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "./components/ui/tabs";
+} from "@/components/ui/card";
+import { Badge } from "@/components/ui/badge";
+import { Progress } from "@/components/ui/progress";
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@/components/ui/table";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Button } from "@/components/ui/button";
 import {
   BarChart,
   Bar,
-  LineChart,
-  Line,
-  PieChart,
-  Pie,
-  Cell,
   XAxis,
   YAxis,
   CartesianGrid,
   Tooltip,
-  Legend,
   ResponsiveContainer,
-  Area,
-  AreaChart,
+  PieChart,
+  Pie,
+  Cell,
 } from "recharts";
 import {
   Activity,
-  AlertCircle,
   Database,
-  Cloud,
-  Server,
-  ArrowRightLeft,
+  TrendingUp,
   Zap,
   DollarSign,
-  RotateCw,
+  RefreshCw,
 } from "lucide-react";
+import { formatDistanceToNow } from "date-fns";
 
-// Types for your existing data structures
-interface StorageMetrics {
-  environment: "aws-s3" | "aws-glacier" | "cloudflare-r2" | "minio";
-  totalSizeGB: number;
-  hotDataGB: number;
-  warmDataGB: number;
-  coldDataGB: number;
-  costPerMonth: number;
-  latencyMs: number;
-  objectCount: number;
-}
+const API_BASE = "http://localhost:3001/api";
 
 interface MigrationJob {
   id: string;
+  datasetName: string;
   source: string;
   destination: string;
-  status: "running" | "completed" | "failed" | "pending";
+  status: "running" | "completed" | "failed";
   progress: number;
-  objectsTransferred: number;
-  totalObjects: number;
+  bytesTransferred: number;
+  totalBytes: number;
   throughputMBps: number;
   startTime: string;
+  endTime?: string;
 }
 
-interface StreamActivity {
-  id: string;
-  topic: string;
-  partition: number;
-  messagesPerSecond: number;
-  avgLatencyMs: number;
-  timestamp: string;
+interface DatasetMetadata {
+  name: string;
+  sizeGB: number;
+  accessCount30d: number;
+  lastAccessed: string;
+  currentLocation: string;
+  latencySensitivity: string;
+  egressPattern: string;
+  businessPriority: number;
 }
 
-interface MLRecommendation {
-  id: string;
-  dataPattern: string;
-  recommendation: "migrate" | "tier-change" | "compress" | "archive";
-  sourceEnv: string;
-  targetEnv: string;
-  confidence: number;
-  estimatedSavings: number;
+interface Prediction {
+  recommendedLocation: string;
+  tier: "hot" | "warm" | "cold";
+  estimatedMonthlyCost: number;
 }
 
-// Main Dashboard Component
-export default function DataManagementDashboard() {
-  const [storageMetrics, setStorageMetrics] = useState<StorageMetrics[]>([]);
+const STORAGE_COLORS = {
+  "minio-on-prem": "#8B5CF6",
+  "aws-s3-vanilla": "#FF9500",
+  "cloudflare-r2": "#F97316",
+  "aws-glacier": "#06B6D4",
+};
+
+const TIER_COLORS = {
+  hot: "#EF4444",
+  warm: "#F59E0B",
+  cold: "#3B82F6",
+};
+
+const Dashboard: React.FC = () => {
   const [migrations, setMigrations] = useState<MigrationJob[]>([]);
-  const [streamActivities, setStreamActivities] = useState<StreamActivity[]>(
-    [],
+  const [dataStore, setDataStore] = useState<Record<string, DatasetMetadata>>(
+    {},
   );
-  const [recommendations, setRecommendations] = useState<MLRecommendation[]>(
-    [],
+  const [predictions, setPredictions] = useState<Record<string, Prediction>>(
+    {},
   );
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars
-  const [isLoading, setIsLoading] = useState(true);
-  const [lastUpdated, setLastUpdated] = useState<Date>(new Date());
+  const [streamEvents, setStreamEvents] = useState<
+    Array<{ id: string; dataset: string; time: string }>
+  >([]);
+  const [loading, setLoading] = useState(true);
+  const [lastUpdate, setLastUpdate] = useState<Date>(new Date());
 
-  // ===== INTEGRATION POINTS FOR YOUR EXISTING CODE =====
+  const fetchData = async () => {
+    try {
+      const [migrationsRes, dataStoreRes, predictionsRes] = await Promise.all([
+        fetch(`${API_BASE}/getMigrations`),
+        fetch(`${API_BASE}/getDataStore`),
+        fetch(`${API_BASE}/getPredictions`),
+      ]);
 
-  // TODO: Replace this with your data classifier service
-  const fetchStorageMetrics = useCallback(async () => {
-    // PLACEHOLDER: Call your data classifier API
-    // const response = await fetch('/api/classifier/metrics');
-    // const data = await response.json();
+      const migrationsData = await migrationsRes.json();
+      const dataStoreData = await dataStoreRes.json();
+      const predictionsData = await predictionsRes.json();
 
-    // MOCK DATA - Replace with actual API call
-    return [
-      {
-        environment: "aws-s3",
-        totalSizeGB: 4500,
-        hotDataGB: 1200,
-        warmDataGB: 2000,
-        coldDataGB: 1300,
-        costPerMonth: 112.5,
-        latencyMs: 45,
-        objectCount: 125000,
-      },
-      {
-        environment: "aws-glacier",
-        totalSizeGB: 8500,
-        hotDataGB: 0,
-        warmDataGB: 500,
-        coldDataGB: 8000,
-        costPerMonth: 20.4,
-        latencyMs: 450,
-        objectCount: 85000,
-      },
-      {
-        environment: "cloudflare-r2",
-        totalSizeGB: 3200,
-        hotDataGB: 800,
-        warmDataGB: 1400,
-        coldDataGB: 1000,
-        costPerMonth: 0,
-        latencyMs: 25,
-        objectCount: 45000,
-      },
-      {
-        environment: "minio",
-        totalSizeGB: 1800,
-        hotDataGB: 900,
-        warmDataGB: 600,
-        coldDataGB: 300,
-        costPerMonth: 45,
-        latencyMs: 5,
-        objectCount: 28000,
-      },
-    ] as StorageMetrics[];
-  }, []);
+      setMigrations(migrationsData);
+      setDataStore(dataStoreData);
+      setPredictions(predictionsData);
+      setLastUpdate(new Date());
+      setLoading(false);
+    } catch (error) {
+      console.error("Failed to fetch data:", error);
+      setLoading(false);
+    }
+  };
 
-  // TODO: Replace this with your migration datastore query
-  const fetchMigrationJobs = useCallback(async () => {
-    // PLACEHOLDER: Query your migration datastore
-    // const response = await fetch('/api/migrations/status');
-    // const data = await response.json();
+  const executeClassification = async () => {
+    try {
+      await fetch(`${API_BASE}/executeClassifications`, { method: "POST" });
+      fetchData();
+    } catch (error) {
+      console.error("Failed to execute classification:", error);
+    }
+  };
 
-    // MOCK DATA - Replace with actual migration datastore call
-    return [
-      {
-        id: "mig-001",
-        source: "aws-s3",
-        destination: "cloudflare-r2",
-        status: "running",
-        progress: 67,
-        objectsTransferred: 83750,
-        totalObjects: 125000,
-        throughputMBps: 150,
-        startTime: new Date(Date.now() - 7200000).toISOString(),
-      },
-      {
-        id: "mig-002",
-        source: "minio",
-        destination: "aws-glacier",
-        status: "completed",
-        progress: 100,
-        objectsTransferred: 28000,
-        totalObjects: 28000,
-        throughputMBps: 95,
-        startTime: new Date(Date.now() - 86400000).toISOString(),
-      },
-    ] as MigrationJob[];
-  }, []);
-
-  // TODO: Replace this with your Kafka/MQTT stream consumer
-  const fetchStreamActivities = useCallback(async () => {
-    // PLACEHOLDER: Subscribe to your Kafka/MQTT topic
-    // const eventSource = new EventSource('/api/stream/activities');
-    // eventSource.onmessage = (event) => { ... }
-
-    // MOCK DATA - Replace with real-time stream integration
-    return [
-      {
-        id: "stream-001",
-        topic: "data-ingestion",
-        partition: 0,
-        messagesPerSecond: 1250,
-        avgLatencyMs: 12,
-        timestamp: new Date().toISOString(),
-      },
-      {
-        id: "stream-002",
-        topic: "migration-events",
-        partition: 1,
-        messagesPerSecond: 85,
-        avgLatencyMs: 8,
-        timestamp: new Date().toISOString(),
-      },
-    ] as StreamActivity[];
-  }, []);
-
-  // TODO: Replace this with your ML model inference
-  const fetchMLRecommendations = useCallback(async () => {
-    // PLACEHOLDER: Call your ML model API
-    // const response = await fetch('/api/ml/recommendations', {
-    //   method: 'POST',
-    //   body: JSON.stringify(storageMetrics)
-    // });
-
-    // MOCK DATA - Replace with actual ML model predictions
-    return [
-      {
-        id: "rec-001",
-        dataPattern: "monthly_report_*.parquet",
-        recommendation: "migrate",
-        sourceEnv: "aws-s3",
-        targetEnv: "aws-glacier",
-        confidence: 0.92,
-        estimatedSavings: 340,
-      },
-      {
-        id: "rec-002",
-        dataPattern: "user_uploads/*",
-        recommendation: "tier-change",
-        sourceEnv: "minio",
-        targetEnv: "minio",
-        confidence: 0.87,
-        estimatedSavings: 45,
-      },
-    ] as MLRecommendation[];
-  }, []);
-
-  // =======================================================
-
-  // Auto-refresh dashboard data
   useEffect(() => {
-    const loadData = async () => {
-      try {
-        setIsLoading(true);
-        const [metrics, jobs, streams, recs] = await Promise.all([
-          fetchStorageMetrics(),
-          fetchMigrationJobs(),
-          fetchStreamActivities(),
-          fetchMLRecommendations(),
+    fetchData();
+    const interval = setInterval(fetchData, 5000); // Refresh every 5 seconds
+
+    // Simulate stream events
+    const streamInterval = setInterval(() => {
+      const datasets = Object.keys(dataStore);
+      if (datasets.length > 0) {
+        const randomDataset =
+          datasets[Math.floor(Math.random() * datasets.length)];
+        setStreamEvents((prev) => [
+          {
+            id: Math.random().toString(36).substr(2, 9),
+            dataset: randomDataset,
+            time: new Date().toISOString(),
+          },
+          ...prev.slice(0, 9), // Keep last 10 events
         ]);
-
-        setStorageMetrics(metrics);
-        setMigrations(jobs);
-        setStreamActivities(streams);
-        setRecommendations(recs);
-        setLastUpdated(new Date());
-      } catch (error) {
-        console.error("Failed to load dashboard data:", error);
-      } finally {
-        setIsLoading(false);
       }
+    }, 2000);
+
+    return () => {
+      clearInterval(interval);
+      clearInterval(streamInterval);
     };
+  }, [dataStore]);
 
-    loadData();
-    const interval = setInterval(loadData, 30000); // Refresh every 30s
-    return () => clearInterval(interval);
-  }, [
-    fetchStorageMetrics,
-    fetchMigrationJobs,
-    fetchStreamActivities,
-    fetchMLRecommendations,
-  ]);
-
-  // Derived metrics for visualizations
-  const totalStorage = storageMetrics.reduce(
-    (acc, m) => acc + m.totalSizeGB,
+  // Calculate metrics
+  const datasets = Object.values(dataStore);
+  const totalDataGB = datasets.reduce((sum, d) => sum + d.sizeGB, 0);
+  const totalAccessCount = datasets.reduce(
+    (sum, d) => sum + d.accessCount30d,
     0,
   );
-  const totalCost = storageMetrics.reduce((acc, m) => acc + m.costPerMonth, 0);
+  const totalCost = Object.entries(predictions).reduce(
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars
+    (sum, [_, p]) => sum + p.estimatedMonthlyCost,
+    0,
+  );
   const activeMigrations = migrations.filter(
     (m) => m.status === "running",
   ).length;
-  const avgLatency =
-    storageMetrics.reduce((acc, m) => acc + m.latencyMs, 0) /
-      storageMetrics.length || 0;
 
-  // Data transformation for charts
-  const storageDistributionData = storageMetrics.map((m) => ({
-    name: m.environment.toUpperCase().replace("-", " "),
-    value: m.totalSizeGB,
-    cost: m.costPerMonth,
-  }));
-
-  const tierDistributionData = [
-    {
-      name: "Hot Data",
-      value: storageMetrics.reduce((acc, m) => acc + m.hotDataGB, 0),
+  // Storage distribution data
+  const storageDistribution = datasets.reduce(
+    (acc, dataset) => {
+      const location = dataset.currentLocation || "unknown";
+      acc[location] = (acc[location] || 0) + dataset.sizeGB;
+      return acc;
     },
-    {
-      name: "Warm Data",
-      value: storageMetrics.reduce((acc, m) => acc + m.warmDataGB, 0),
+    {} as Record<string, number>,
+  );
+
+  const storageChartData = Object.entries(storageDistribution).map(
+    ([name, value]) => ({
+      name: name.replace(/-/g, " ").toUpperCase(),
+      value: Math.round(value * 100) / 100,
+      fill: STORAGE_COLORS[name as keyof typeof STORAGE_COLORS] || "#94A3B8",
+    }),
+  );
+
+  // Tier distribution
+  const tierDistribution = Object.values(predictions).reduce(
+    (acc, pred) => {
+      acc[pred.tier] = (acc[pred.tier] || 0) + 1;
+      return acc;
     },
-    {
-      name: "Cold Data",
-      value: storageMetrics.reduce((acc, m) => acc + m.coldDataGB, 0),
-    },
-  ];
+    {} as Record<string, number>,
+  );
 
-  const latencyCostData = storageMetrics.map((m) => ({
-    environment: m.environment.toUpperCase().replace("-", " "),
-    latency: m.latencyMs,
-    cost: m.costPerMonth,
-    size: m.totalSizeGB,
-  }));
+  const tierChartData = Object.entries(tierDistribution).map(
+    ([tier, count]) => ({
+      tier: tier.toUpperCase(),
+      count,
+      fill: TIER_COLORS[tier as keyof typeof TIER_COLORS],
+    }),
+  );
 
-  const COLORS = ["#3b82f6", "#10b981", "#f59e0b", "#ef4444"];
+  // Migration throughput over time (for running migrations)
+  const throughputData = migrations
+    .filter((m) => m.status === "running")
+    .map((m) => ({
+      name: m.datasetName.substring(0, 20),
+      throughput: Math.round(m.throughputMBps * 10) / 10,
+    }));
 
-  // Status badge component
-  const StatusBadge = ({ status }: { status: string }) => {
-    const variants: Record<string, string> = {
-      running: "bg-blue-500",
-      completed: "bg-green-500",
-      failed: "bg-red-500",
-      pending: "bg-yellow-500",
-    };
-
+  if (loading) {
     return (
-      <Badge className={variants[status] || "bg-gray-500"}>
-        {status.charAt(0).toUpperCase() + status.slice(1)}
-      </Badge>
+      <div className="flex items-center justify-center h-screen bg-slate-950">
+        <div className="text-slate-400">Loading dashboard...</div>
+      </div>
     );
-  };
+  }
 
   return (
-    <div className="min-h-screen bg-gray-50 p-6">
-      <div className="max-w-7xl mx-auto">
+    <div className="min-h-screen bg-slate-950 text-slate-100 p-6">
+      <div className="max-w-7xl mx-auto space-y-6">
         {/* Header */}
-        <div className="mb-8">
-          <h1 className="text-4xl font-bold text-gray-900 mb-2">
-            Data in Motion Dashboard
-          </h1>
-          <p className="text-gray-600 flex items-center gap-2">
-            <Activity className="w-4 h-4" />
-            Real-time intelligent data management across hybrid cloud
-            <span className="ml-auto text-sm text-gray-500">
-              Last updated: {lastUpdated.toLocaleTimeString()}
+        <div className="flex justify-between items-center">
+          <div>
+            <h1 className="text-3xl font-bold bg-gradient-to-r from-purple-400 to-pink-600 bg-clip-text text-transparent">
+              Intelligent Cloud Storage Dashboard
+            </h1>
+            <p className="text-slate-400 mt-1">
+              Data in Motion - NetApp Hackathon
+            </p>
+          </div>
+          <div className="flex items-center gap-4">
+            <span className="text-sm text-slate-400">
+              Last updated:{" "}
+              {formatDistanceToNow(lastUpdate, { addSuffix: true })}
             </span>
-          </p>
+            <Button onClick={fetchData} variant="outline" size="sm">
+              <RefreshCw className="w-4 h-4 mr-2" />
+              Refresh
+            </Button>
+            <Button onClick={executeClassification} variant="default" size="sm">
+              <Zap className="w-4 h-4 mr-2" />
+              Run Classification
+            </Button>
+          </div>
         </div>
 
-        {/* Key Metrics Cards */}
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-8">
-          <Card>
-            <CardHeader className="flex flex-row items-center justify-between pb-2">
-              <CardTitle className="text-sm font-medium text-gray-600">
-                Total Storage
+        {/* Overview Cards */}
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+          <Card className="bg-slate-900 border-slate-800">
+            <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+              <CardTitle className="text-sm font-medium text-slate-200">
+                Total Data
               </CardTitle>
-              <Database className="w-4 h-4 text-blue-500" />
+              <Database className="h-4 w-4 text-purple-500" />
             </CardHeader>
             <CardContent>
-              <div className="text-2xl font-bold">
-                {(totalStorage / 1000).toFixed(1)} TB
+              <div className="text-2xl font-bold text-slate-100">
+                {totalDataGB.toFixed(2)} GB
               </div>
-              <p className="text-xs text-gray-500 mt-1">
-                Across {storageMetrics.length} environments
+              <p className="text-xs text-slate-400 mt-1">
+                Across {datasets.length} datasets
               </p>
             </CardContent>
           </Card>
 
-          <Card>
-            <CardHeader className="flex flex-row items-center justify-between pb-2">
-              <CardTitle className="text-sm font-medium text-gray-600">
+          <Card className="bg-slate-900 border-slate-800">
+            <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+              <CardTitle className="text-sm font-medium text-slate-200">
                 Monthly Cost
               </CardTitle>
-              <DollarSign className="w-4 h-4 text-green-500" />
+              <DollarSign className="h-4 w-4 text-green-500" />
             </CardHeader>
             <CardContent>
-              <div className="text-2xl font-bold">${totalCost.toFixed(2)}</div>
-              <p className="text-xs text-green-600 mt-1">
-                ↓ $340 potential savings identified
+              <div className="text-2xl font-bold text-slate-100">
+                ${totalCost.toFixed(2)}
+              </div>
+              <p className="text-xs text-slate-400 mt-1">
+                Optimized storage costs
               </p>
             </CardContent>
           </Card>
 
-          <Card>
-            <CardHeader className="flex flex-row items-center justify-between pb-2">
-              <CardTitle className="text-sm font-medium text-gray-600">
+          <Card className="bg-slate-900 border-slate-800">
+            <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+              <CardTitle className="text-sm font-medium text-slate-200">
                 Active Migrations
               </CardTitle>
-              <ArrowRightLeft className="w-4 h-4 text-purple-500" />
+              <TrendingUp className="h-4 w-4 text-blue-500" />
             </CardHeader>
             <CardContent>
-              <div className="text-2xl font-bold">{activeMigrations}</div>
-              <p className="text-xs text-gray-500 mt-1">
-                {migrations.filter((m) => m.status === "completed").length}{" "}
-                completed today
+              <div className="text-2xl font-bold text-slate-100">
+                {activeMigrations}
+              </div>
+              <p className="text-xs text-slate-400 mt-1">
+                {migrations.length} total jobs
               </p>
             </CardContent>
           </Card>
 
-          <Card>
-            <CardHeader className="flex flex-row items-center justify-between pb-2">
-              <CardTitle className="text-sm font-medium text-gray-600">
-                Avg Latency
+          <Card className="bg-slate-900 border-slate-800">
+            <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+              <CardTitle className="text-sm font-medium text-slate-200">
+                Access Events (30d)
               </CardTitle>
-              <Zap className="w-4 h-4 text-yellow-500" />
+              <Activity className="h-4 w-4 text-orange-500" />
             </CardHeader>
             <CardContent>
-              <div className="text-2xl font-bold">
-                {avgLatency.toFixed(0)}ms
+              <div className="text-2xl font-bold text-slate-100">
+                {totalAccessCount.toLocaleString()}
               </div>
-              <p className="text-xs text-gray-500 mt-1">
-                Real-time stream active
+              <p className="text-xs text-slate-400 mt-1">
+                Real-time monitoring
               </p>
             </CardContent>
           </Card>
         </div>
 
-        {/* Main Tabs */}
-        <Tabs defaultValue="overview" className="space-y-6">
-          <TabsList className="bg-white p-1">
+        {/* Main Content Tabs */}
+        <Tabs defaultValue="overview" className="space-y-4">
+          <TabsList className="bg-slate-900 border border-slate-800">
             <TabsTrigger value="overview">Overview</TabsTrigger>
-            <TabsTrigger value="storage">Storage Details</TabsTrigger>
             <TabsTrigger value="migrations">Migrations</TabsTrigger>
-            <TabsTrigger value="streams">Real-time Streams</TabsTrigger>
-            <TabsTrigger value="insights">ML Insights</TabsTrigger>
+            <TabsTrigger value="streaming">Real-Time Stream</TabsTrigger>
+            <TabsTrigger value="datasets">Datasets</TabsTrigger>
           </TabsList>
 
           {/* Overview Tab */}
-          <TabsContent value="overview" className="space-y-6">
-            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-              {/* Storage Distribution Pie Chart */}
-              <Card>
+          <TabsContent value="overview" className="space-y-4">
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+              {/* Storage Distribution */}
+              <Card className="bg-slate-900 border-slate-800">
                 <CardHeader>
-                  <CardTitle>Storage Distribution</CardTitle>
-                  <CardDescription>
-                    Data distribution across cloud environments
+                  <CardTitle className="text-slate-100">
+                    Storage Distribution
+                  </CardTitle>
+                  <CardDescription className="text-slate-400">
+                    Data across cloud providers
                   </CardDescription>
                 </CardHeader>
                 <CardContent>
                   <ResponsiveContainer width="100%" height={300}>
                     <PieChart>
                       <Pie
-                        data={storageDistributionData}
-                        dataKey="value"
-                        nameKey="name"
+                        data={storageChartData}
                         cx="50%"
                         cy="50%"
-                        outerRadius={100}
-                        // eslint-disable-next-line
-                        // @ts-ignore
-                        label={(parameters: {
-                          name: string;
-                          percent: number;
-                        }) => {
-                          return `${parameters.name}\n${(parameters.percent * 100).toFixed(0)}%`;
-                        }}
+                        labelLine={false}
+                        label={({ name, value }) => `${name}: ${value}GB`}
+                        outerRadius={80}
+                        fill="#8884d8"
+                        dataKey="value"
                       >
-                        {storageDistributionData.map((entry, index) => (
-                          <Cell
-                            key={`cell-${index}`}
-                            fill={COLORS[index % COLORS.length]}
-                          />
+                        {storageChartData.map((entry, index) => (
+                          <Cell key={`cell-${index}`} fill={entry.fill} />
                         ))}
                       </Pie>
                       <Tooltip
-                        formatter={(value: number) => `${value.toFixed(0)} GB`}
+                        contentStyle={{
+                          backgroundColor: "#1e293b",
+                          border: "1px solid #334155",
+                          borderRadius: "6px",
+                          color: "#f1f5f9",
+                        }}
                       />
                     </PieChart>
                   </ResponsiveContainer>
@@ -476,485 +379,328 @@ export default function DataManagementDashboard() {
               </Card>
 
               {/* Data Tier Distribution */}
-              <Card>
+              <Card className="bg-slate-900 border-slate-800">
                 <CardHeader>
-                  <CardTitle>Data Temperature Tiers</CardTitle>
-                  <CardDescription>
-                    Hot/Warm/Cold data classification
+                  <CardTitle className="text-slate-100">
+                    Data Tier Distribution
+                  </CardTitle>
+                  <CardDescription className="text-slate-400">
+                    Hot, Warm, and Cold data classification
                   </CardDescription>
                 </CardHeader>
                 <CardContent>
                   <ResponsiveContainer width="100%" height={300}>
-                    <BarChart data={tierDistributionData}>
-                      <CartesianGrid strokeDasharray="3 3" />
-                      <XAxis dataKey="name" />
-                      <YAxis />
+                    <BarChart data={tierChartData}>
+                      <CartesianGrid strokeDasharray="3 3" stroke="#334155" />
+                      <XAxis dataKey="tier" stroke="#94a3b8" />
+                      <YAxis stroke="#94a3b8" />
                       <Tooltip
-                        formatter={(value: number) => `${value.toFixed(0)} GB`}
+                        contentStyle={{
+                          backgroundColor: "#1e293b",
+                          border: "1px solid #334155",
+                          borderRadius: "6px",
+                          color: "#f1f5f9",
+                        }}
                       />
-                      <Bar dataKey="value" fill="#3b82f6" />
+                      <Bar dataKey="count" fill="#8884d8" radius={[8, 8, 0, 0]}>
+                        {tierChartData.map((entry, index) => (
+                          <Cell key={`cell-${index}`} fill={entry.fill} />
+                        ))}
+                      </Bar>
                     </BarChart>
                   </ResponsiveContainer>
                 </CardContent>
               </Card>
+            </div>
 
-              {/* Latency vs Cost Scatter */}
-              <Card className="lg:col-span-2">
+            {/* Migration Throughput */}
+            {throughputData.length > 0 && (
+              <Card className="bg-slate-900 border-slate-800">
                 <CardHeader>
-                  <CardTitle>Cost vs Performance Analysis</CardTitle>
-                  <CardDescription>
-                    Storage cost effectiveness by environment
+                  <CardTitle className="text-slate-100">
+                    Active Migration Throughput
+                  </CardTitle>
+                  <CardDescription className="text-slate-400">
+                    Current data transfer rates (MB/s)
                   </CardDescription>
                 </CardHeader>
                 <CardContent>
-                  <ResponsiveContainer width="100%" height={350}>
-                    <AreaChart data={latencyCostData}>
-                      <CartesianGrid strokeDasharray="3 3" />
-                      <XAxis dataKey="environment" />
-                      <YAxis
-                        yAxisId="left"
-                        label={{
-                          value: "Latency (ms)",
-                          angle: -90,
-                          position: "insideLeft",
+                  <ResponsiveContainer width="100%" height={250}>
+                    <BarChart data={throughputData}>
+                      <CartesianGrid strokeDasharray="3 3" stroke="#334155" />
+                      <XAxis dataKey="name" stroke="#94a3b8" />
+                      <YAxis stroke="#94a3b8" />
+                      <Tooltip
+                        contentStyle={{
+                          backgroundColor: "#1e293b",
+                          border: "1px solid #334155",
+                          borderRadius: "6px",
+                          color: "#f1f5f9",
                         }}
                       />
-                      <YAxis
-                        yAxisId="right"
-                        orientation="right"
-                        label={{
-                          value: "Cost ($)",
-                          angle: 90,
-                          position: "insideRight",
-                        }}
+                      <Bar
+                        dataKey="throughput"
+                        fill="#8B5CF6"
+                        radius={[8, 8, 0, 0]}
                       />
-                      <Tooltip />
-                      <Legend />
-                      <Area
-                        yAxisId="left"
-                        type="monotone"
-                        dataKey="latency"
-                        stroke="#ef4444"
-                        fill="#fca5a5"
-                        name="Latency (ms)"
-                      />
-                      <Area
-                        yAxisId="right"
-                        type="monotone"
-                        dataKey="cost"
-                        stroke="#10b981"
-                        fill="#a7f3d0"
-                        name="Cost ($/month)"
-                      />
-                    </AreaChart>
+                    </BarChart>
                   </ResponsiveContainer>
                 </CardContent>
               </Card>
-            </div>
-          </TabsContent>
-
-          {/* Storage Tab */}
-          <TabsContent value="storage" className="space-y-6">
-            <Card>
-              <CardHeader>
-                <CardTitle>Environment Details</CardTitle>
-                <CardDescription>
-                  Detailed metrics per storage environment
-                </CardDescription>
-              </CardHeader>
-              <CardContent>
-                <div className="space-y-4">
-                  {storageMetrics.map((env) => (
-                    <div
-                      key={env.environment}
-                      className="border rounded-lg p-4"
-                    >
-                      <div className="flex items-center justify-between mb-3">
-                        <div className="flex items-center gap-2">
-                          {env.environment === "aws-s3" && (
-                            <Cloud className="w-5 h-5 text-orange-500" />
-                          )}
-                          {env.environment === "aws-glacier" && (
-                            <Cloud className="w-5 h-5 text-blue-600" />
-                          )}
-                          {env.environment === "cloudflare-r2" && (
-                            <Cloud className="w-5 h-5 text-orange-600" />
-                          )}
-                          {env.environment === "minio" && (
-                            <Server className="w-5 h-5 text-gray-600" />
-                          )}
-                          <span className="font-semibold capitalize">
-                            {env.environment.replace("-", " ")}
-                          </span>
-                        </div>
-                        <Badge
-                          variant={env.latencyMs < 50 ? "default" : "secondary"}
-                        >
-                          {env.latencyMs}ms latency
-                        </Badge>
-                      </div>
-
-                      <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-sm">
-                        <div>
-                          <span className="text-gray-500">Total Size:</span>
-                          <div className="font-semibold">
-                            {(env.totalSizeGB / 1000).toFixed(2)} TB
-                          </div>
-                        </div>
-                        <div>
-                          <span className="text-gray-500">Objects:</span>
-                          <div className="font-semibold">
-                            {env.objectCount.toLocaleString()}
-                          </div>
-                        </div>
-                        <div>
-                          <span className="text-gray-500">Monthly Cost:</span>
-                          <div className="font-semibold">
-                            ${env.costPerMonth.toFixed(2)}
-                          </div>
-                        </div>
-                        <div>
-                          <span className="text-gray-500">Data Tiers:</span>
-                          <div className="font-semibold">
-                            {env.hotDataGB > 0 && (
-                              <span className="text-red-500">
-                                H:{env.hotDataGB}GB{" "}
-                              </span>
-                            )}
-                            {env.warmDataGB > 0 && (
-                              <span className="text-yellow-500">
-                                W:{env.warmDataGB}GB{" "}
-                              </span>
-                            )}
-                            {env.coldDataGB > 0 && (
-                              <span className="text-blue-500">
-                                C:{env.coldDataGB}GB
-                              </span>
-                            )}
-                          </div>
-                        </div>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              </CardContent>
-            </Card>
+            )}
           </TabsContent>
 
           {/* Migrations Tab */}
-          <TabsContent value="migrations" className="space-y-6">
-            <Card>
+          <TabsContent value="migrations" className="space-y-4">
+            <Card className="bg-slate-900 border-slate-800">
               <CardHeader>
-                <div className="flex items-center justify-between">
-                  <div>
-                    <CardTitle>Migration Jobs</CardTitle>
-                    <CardDescription>
-                      Track data movement across environments
-                    </CardDescription>
-                  </div>
-                  <Button
-                    size="sm"
-                    onClick={() => {
-                      /* TODO: Trigger new migration */
-                    }}
-                  >
-                    <RotateCw className="w-4 h-4 mr-2" />
-                    Refresh
-                  </Button>
-                </div>
-              </CardHeader>
-              <CardContent>
-                <div className="space-y-4">
-                  {migrations.map((job) => (
-                    <div key={job.id} className="border rounded-lg p-4">
-                      <div className="flex items-center justify-between mb-3">
-                        <div className="flex items-center gap-3">
-                          <StatusBadge status={job.status} />
-                          <span className="font-mono text-sm">{job.id}</span>
-                          <span className="text-gray-600">
-                            {job.source} → {job.destination}
-                          </span>
-                        </div>
-                        <span className="text-sm text-gray-500">
-                          {job.objectsTransferred.toLocaleString()} /{" "}
-                          {job.totalObjects.toLocaleString()} objects
-                        </span>
-                      </div>
-
-                      <div className="mb-3">
-                        <div className="flex justify-between text-sm mb-1">
-                          <span>Progress</span>
-                          <span>{job.progress}%</span>
-                        </div>
-                        <div className="w-full bg-gray-200 rounded-full h-2">
-                          <div
-                            className="bg-blue-500 h-2 rounded-full transition-all duration-500"
-                            style={{ width: `${job.progress}%` }}
-                          />
-                        </div>
-                      </div>
-
-                      <div className="grid grid-cols-3 gap-4 text-sm">
-                        <div>
-                          <span className="text-gray-500">Throughput:</span>
-                          <div className="font-semibold">
-                            {job.throughputMBps} MB/s
-                          </div>
-                        </div>
-                        <div>
-                          <span className="text-gray-500">Started:</span>
-                          <div className="font-semibold">
-                            {new Date(job.startTime).toLocaleString()}
-                          </div>
-                        </div>
-                        <div>
-                          <span className="text-gray-500">ETA:</span>
-                          <div className="font-semibold">
-                            {job.status === "running"
-                              ? "~45 mins"
-                              : "Completed"}
-                          </div>
-                        </div>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              </CardContent>
-            </Card>
-          </TabsContent>
-
-          {/* Streams Tab */}
-          <TabsContent value="streams" className="space-y-6">
-            <Card>
-              <CardHeader>
-                <CardTitle>Real-time Stream Activity</CardTitle>
-                <CardDescription>
-                  Live data ingestion from Kafka/MQTT topics
+                <CardTitle className="text-slate-100">Migration Jobs</CardTitle>
+                <CardDescription className="text-slate-400">
+                  Track data movement across storage environments
                 </CardDescription>
               </CardHeader>
               <CardContent>
-                <div className="space-y-4">
-                  <div className="flex items-center gap-2 text-sm text-green-600 mb-4">
-                    <div className="w-2 h-2 bg-green-500 rounded-full animate-pulse" />
-                    Connected to message stream
-                  </div>
-
-                  {streamActivities.map((stream) => (
-                    <div key={stream.id} className="border rounded-lg p-4">
-                      <div className="flex items-center justify-between mb-2">
-                        <div className="flex items-center gap-3">
-                          <Zap className="w-5 h-5 text-yellow-500" />
-                          <span className="font-semibold">{stream.topic}</span>
-                          <Badge variant="outline">
-                            Partition {stream.partition}
-                          </Badge>
-                        </div>
-                        <span className="text-sm text-gray-500">
-                          {new Date(stream.timestamp).toLocaleTimeString()}
-                        </span>
-                      </div>
-
-                      <div className="grid grid-cols-3 gap-4 text-sm">
-                        <div>
-                          <span className="text-gray-500">Messages/sec:</span>
-                          <div className="font-semibold text-green-600">
-                            {stream.messagesPerSecond.toLocaleString()}
-                          </div>
-                        </div>
-                        <div>
-                          <span className="text-gray-500">Avg Latency:</span>
-                          <div className="font-semibold">
-                            {stream.avgLatencyMs}ms
-                          </div>
-                        </div>
-                        <div>
-                          <span className="text-gray-500">Status:</span>
-                          <div className="font-semibold text-green-600">
-                            Active
-                          </div>
-                        </div>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-
-                {/* Real-time Chart Placeholder */}
-                <div className="mt-6">
-                  <Card>
-                    <CardHeader>
-                      <CardTitle>Stream Throughput (Last 5 Minutes)</CardTitle>
-                    </CardHeader>
-                    <CardContent>
-                      <ResponsiveContainer width="100%" height={250}>
-                        <LineChart
-                          data={
-                            /* TODO: Connect to real-time stream buffer */ []
-                          }
+                <Table>
+                  <TableHeader>
+                    <TableRow className="border-slate-800">
+                      <TableHead className="text-slate-300">Dataset</TableHead>
+                      <TableHead className="text-slate-300">
+                        Source → Destination
+                      </TableHead>
+                      <TableHead className="text-slate-300">Status</TableHead>
+                      <TableHead className="text-slate-300">Progress</TableHead>
+                      <TableHead className="text-slate-300">
+                        Throughput
+                      </TableHead>
+                      <TableHead className="text-slate-300">Started</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {migrations.length === 0 ? (
+                      <TableRow>
+                        <TableCell
+                          colSpan={6}
+                          className="text-center text-slate-400"
                         >
-                          <CartesianGrid strokeDasharray="3 3" />
-                          <XAxis dataKey="timestamp" />
-                          <YAxis />
-                          <Tooltip />
-                          <Line
-                            type="monotone"
-                            dataKey="throughput"
-                            stroke="#3b82f6"
-                          />
-                        </LineChart>
-                      </ResponsiveContainer>
-                      <div className="text-center text-gray-500 text-sm mt-4">
-                        Connect your Kafka/MQTT consumer to populate this chart
-                      </div>
-                    </CardContent>
-                  </Card>
-                </div>
-              </CardContent>
-            </Card>
-          </TabsContent>
-
-          {/* ML Insights Tab */}
-          <TabsContent value="insights" className="space-y-6">
-            <Card>
-              <CardHeader>
-                <CardTitle>Predictive Recommendations</CardTitle>
-                <CardDescription>
-                  AI-powered insights from your ML model
-                </CardDescription>
-              </CardHeader>
-              <CardContent>
-                <div className="space-y-4">
-                  {recommendations.map((rec) => (
-                    <div
-                      key={rec.id}
-                      className="border rounded-lg p-4 bg-blue-50"
-                    >
-                      <div className="flex items-start justify-between">
-                        <div className="flex-1">
-                          <div className="flex items-center gap-2 mb-2">
-                            <span className="font-semibold">Pattern:</span>
-                            <code className="px-2 py-1 bg-gray-100 rounded text-sm">
-                              {rec.dataPattern}
-                            </code>
+                          No migration jobs found
+                        </TableCell>
+                      </TableRow>
+                    ) : (
+                      migrations.map((migration) => (
+                        <TableRow
+                          key={migration.id}
+                          className="border-slate-800"
+                        >
+                          <TableCell className="font-medium text-slate-200">
+                            {migration.datasetName}
+                          </TableCell>
+                          <TableCell className="text-slate-300">
+                            <span className="text-xs">
+                              {migration.source} → {migration.destination}
+                            </span>
+                          </TableCell>
+                          <TableCell>
                             <Badge
+                              variant={
+                                migration.status === "completed"
+                                  ? "default"
+                                  : migration.status === "running"
+                                    ? "secondary"
+                                    : "destructive"
+                              }
                               className={
-                                rec.confidence > 0.9
-                                  ? "bg-green-500"
-                                  : "bg-blue-500"
+                                migration.status === "completed"
+                                  ? "bg-green-500/20 text-green-400 border-green-500/30"
+                                  : migration.status === "running"
+                                    ? "bg-blue-500/20 text-blue-400 border-blue-500/30"
+                                    : "bg-red-500/20 text-red-400 border-red-500/30"
                               }
                             >
-                              {Math.round(rec.confidence * 100)}% confidence
+                              {migration.status}
                             </Badge>
-                          </div>
+                          </TableCell>
+                          <TableCell>
+                            <div className="space-y-1">
+                              <Progress
+                                value={migration.progress}
+                                className="h-2"
+                              />
+                              <span className="text-xs text-slate-400">
+                                {migration.progress}% (
+                                {(
+                                  migration.bytesTransferred /
+                                  1024 /
+                                  1024
+                                ).toFixed(2)}{" "}
+                                MB /{" "}
+                                {(migration.totalBytes / 1024 / 1024).toFixed(
+                                  2,
+                                )}{" "}
+                                MB)
+                              </span>
+                            </div>
+                          </TableCell>
+                          <TableCell className="text-slate-300">
+                            {migration.throughputMBps.toFixed(2)} MB/s
+                          </TableCell>
+                          <TableCell className="text-slate-400 text-sm">
+                            {formatDistanceToNow(
+                              new Date(migration.startTime),
+                              { addSuffix: true },
+                            )}
+                          </TableCell>
+                        </TableRow>
+                      ))
+                    )}
+                  </TableBody>
+                </Table>
+              </CardContent>
+            </Card>
+          </TabsContent>
 
-                          <div className="text-sm text-gray-700 mb-2">
-                            <span className="font-medium">Recommendation:</span>{" "}
-                            {rec.recommendation === "migrate" &&
-                              `Migrate from ${rec.sourceEnv} to ${rec.targetEnv}`}
-                            {rec.recommendation === "tier-change" &&
-                              `Change tier within ${rec.sourceEnv}`}
-                            {rec.recommendation === "compress" &&
-                              `Apply compression to pattern`}
-                            {rec.recommendation === "archive" &&
-                              `Archive to ${rec.targetEnv}`}
-                          </div>
-
-                          <div className="flex items-center gap-4 text-sm">
-                            <span className="text-green-600 font-semibold">
-                              💰 Save ${rec.estimatedSavings}/month
-                            </span>
-                          </div>
+          {/* Streaming Tab */}
+          <TabsContent value="streaming" className="space-y-4">
+            <Card className="bg-slate-900 border-slate-800">
+              <CardHeader>
+                <CardTitle className="text-slate-100 flex items-center gap-2">
+                  <Zap className="w-5 h-5 text-yellow-500 animate-pulse" />
+                  Real-Time Data Access Events
+                </CardTitle>
+                <CardDescription className="text-slate-400">
+                  Live MQTT stream monitoring
+                </CardDescription>
+              </CardHeader>
+              <CardContent>
+                <div className="space-y-2">
+                  {streamEvents.length === 0 ? (
+                    <div className="text-center text-slate-400 py-8">
+                      Waiting for stream events...
+                    </div>
+                  ) : (
+                    streamEvents.map((event) => (
+                      <div
+                        key={event.id}
+                        className="flex items-center justify-between p-3 bg-slate-800/50 rounded-lg border border-slate-700 animate-in slide-in-from-top-2"
+                      >
+                        <div className="flex items-center gap-3">
+                          <Activity className="w-4 h-4 text-green-500" />
+                          <span className="text-slate-200 font-mono text-sm">
+                            {event.dataset}
+                          </span>
                         </div>
-
-                        <Button
-                          size="sm"
-                          onClick={() => {
-                            // TODO: Implement recommendation execution
-                            console.log(`Executing recommendation ${rec.id}`);
-                          }}
-                        >
-                          Apply
-                        </Button>
+                        <span className="text-xs text-slate-400">
+                          {formatDistanceToNow(new Date(event.time), {
+                            addSuffix: true,
+                          })}
+                        </span>
                       </div>
-                    </div>
-                  ))}
-
-                  {recommendations.length === 0 && (
-                    <div className="text-center py-8 text-gray-500">
-                      <AlertCircle className="w-12 h-12 mx-auto mb-4 text-gray-300" />
-                      <p>
-                        No recommendations available. The ML model is analyzing
-                        patterns...
-                      </p>
-                    </div>
+                    ))
                   )}
                 </div>
               </CardContent>
             </Card>
+          </TabsContent>
 
-            {/* Model Performance Metrics */}
-            <Card>
+          {/* Datasets Tab */}
+          <TabsContent value="datasets" className="space-y-4">
+            <Card className="bg-slate-900 border-slate-800">
               <CardHeader>
-                <CardTitle>ML Model Performance</CardTitle>
-                <CardDescription>
-                  Track prediction accuracy and learning progress
+                <CardTitle className="text-slate-100">
+                  Dataset Overview
+                </CardTitle>
+                <CardDescription className="text-slate-400">
+                  All datasets with predictions and recommendations
                 </CardDescription>
               </CardHeader>
               <CardContent>
-                <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                  <div className="border rounded-lg p-4">
-                    <div className="text-sm text-gray-500 mb-1">
-                      Prediction Accuracy
-                    </div>
-                    <div className="text-2xl font-bold">94.2%</div>
-                    <div className="text-xs text-green-600">
-                      ↑ 2.1% this week
-                    </div>
-                  </div>
-                  <div className="border rounded-lg p-4">
-                    <div className="text-sm text-gray-500 mb-1">
-                      Patterns Identified
-                    </div>
-                    <div className="text-2xl font-bold">1,247</div>
-                    <div className="text-xs text-blue-600">+34 today</div>
-                  </div>
-                  <div className="border rounded-lg p-4">
-                    <div className="text-sm text-gray-500 mb-1">
-                      Avg Savings/Rec
-                    </div>
-                    <div className="text-2xl font-bold">$156</div>
-                    <div className="text-xs text-gray-600">
-                      Per recommendation
-                    </div>
-                  </div>
-                </div>
-
-                {/* TODO: Connect to your ML model training metrics */}
-                <div className="mt-6">
-                  <ResponsiveContainer width="100%" height={200}>
-                    <LineChart
-                      data={
-                        /* TODO: Add your model's historical performance data */ []
-                      }
-                    >
-                      <CartesianGrid strokeDasharray="3 3" />
-                      <XAxis dataKey="date" />
-                      <YAxis />
-                      <Tooltip />
-                      <Line
-                        type="monotone"
-                        dataKey="accuracy"
-                        stroke="#3b82f6"
-                        name="Accuracy"
-                      />
-                      <Line
-                        type="monotone"
-                        dataKey="precision"
-                        stroke="#10b981"
-                        name="Precision"
-                      />
-                    </LineChart>
-                  </ResponsiveContainer>
-                </div>
+                <Table>
+                  <TableHeader>
+                    <TableRow className="border-slate-800">
+                      <TableHead className="text-slate-300">Name</TableHead>
+                      <TableHead className="text-slate-300">Size</TableHead>
+                      <TableHead className="text-slate-300">Location</TableHead>
+                      <TableHead className="text-slate-300">Tier</TableHead>
+                      <TableHead className="text-slate-300">
+                        Access (30d)
+                      </TableHead>
+                      <TableHead className="text-slate-300">
+                        Est. Cost/Mo
+                      </TableHead>
+                      <TableHead className="text-slate-300">
+                        Last Access
+                      </TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {datasets.length === 0 ? (
+                      <TableRow>
+                        <TableCell
+                          colSpan={7}
+                          className="text-center text-slate-400"
+                        >
+                          No datasets found
+                        </TableCell>
+                      </TableRow>
+                    ) : (
+                      datasets.map((dataset) => {
+                        const prediction = predictions[dataset.name];
+                        return (
+                          <TableRow
+                            key={dataset.name}
+                            className="border-slate-800"
+                          >
+                            <TableCell className="font-medium text-slate-200">
+                              {dataset.name}
+                            </TableCell>
+                            <TableCell className="text-slate-300">
+                              {dataset.sizeGB.toFixed(2)} GB
+                            </TableCell>
+                            <TableCell>
+                              <Badge
+                                variant="outline"
+                                className="bg-purple-500/10 text-purple-400 border-purple-500/30"
+                              >
+                                {dataset.currentLocation
+                                  ?.replace(/-/g, " ")
+                                  .toUpperCase()}
+                              </Badge>
+                            </TableCell>
+                            <TableCell>
+                              {prediction && (
+                                <Badge
+                                  variant="outline"
+                                  className={
+                                    prediction.tier === "hot"
+                                      ? "bg-red-500/10 text-red-400 border-red-500/30"
+                                      : prediction.tier === "warm"
+                                        ? "bg-orange-500/10 text-orange-400 border-orange-500/30"
+                                        : "bg-blue-500/10 text-blue-400 border-blue-500/30"
+                                  }
+                                >
+                                  {prediction.tier.toUpperCase()}
+                                </Badge>
+                              )}
+                            </TableCell>
+                            <TableCell className="text-slate-300">
+                              {dataset.accessCount30d.toLocaleString()}
+                            </TableCell>
+                            <TableCell className="text-slate-300">
+                              $
+                              {prediction?.estimatedMonthlyCost.toFixed(2) ||
+                                "N/A"}
+                            </TableCell>
+                            <TableCell className="text-slate-400 text-sm">
+                              {formatDistanceToNow(
+                                new Date(dataset.lastAccessed),
+                                { addSuffix: true },
+                              )}
+                            </TableCell>
+                          </TableRow>
+                        );
+                      })
+                    )}
+                  </TableBody>
+                </Table>
               </CardContent>
             </Card>
           </TabsContent>
@@ -962,4 +708,6 @@ export default function DataManagementDashboard() {
       </div>
     </div>
   );
-}
+};
+
+export default Dashboard;

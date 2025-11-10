@@ -105,21 +105,21 @@ export async function executeMigration(
 
     if (toLatency > 0) await simulateDelay(toLatency);
 
-    const cleanupDelay = 20; // ms
+    const cleanupDelay = 20;
     await simulateDelay(cleanupDelay);
 
     const end = Date.now();
-    const elapsedMs = Math.max(1, end - t0); // avoid division by zero
-    const networkSimulatedMs = Math.max(1, fromLatency + toLatency); // at least 1 ms
+    const elapsedMs = Math.max(1, end - t0);
+    const networkSimulatedMs = Math.max(1, fromLatency + toLatency);
 
     const bytes = totalBytes;
     const secondsObserved = elapsedMs / 1000;
     const secondsNetwork = networkSimulatedMs / 1000;
 
     const throughputMBps =
-      bytes > 0 ? bytes / secondsObserved / (1024 * 1024) : 0; // MiB/s observed
+      bytes > 0 ? bytes / secondsObserved / (1024 * 1024) : 0;
     const throughputNetworkMBps =
-      bytes > 0 ? bytes / secondsNetwork / (1024 * 1024) : 0; // MiB/s simulated network-only
+      bytes > 0 ? bytes / secondsNetwork / (1024 * 1024) : 0;
 
     await upsertJob({
       id: jobId,
