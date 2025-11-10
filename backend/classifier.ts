@@ -1,5 +1,7 @@
+import fs from "fs/promises";
 import { STORAGE_SILOES } from "./storage-siloes";
 import type { StorageSiloe } from "./storage-siloes";
+import { executeMigration } from "./mock-apis/migration";
 
 export interface DatasetMetadata {
   name: string;
@@ -16,6 +18,32 @@ export interface ClassificationResult {
   recommendedLocation: keyof typeof STORAGE_SILOES;
   tier: "hot" | "warm" | "cold";
   estimatedMonthlyCost: number;
+}
+
+export async function executeClassification() {
+  const dataStore = await fs.readFile("./dataStore.json", "utf-8");
+  const dataStoreJson = JSON.parse(dataStore);
+
+  let newDataStore: DatasetMetadata[] = [];
+
+  dataStoreJson.forEach(async (dataset: DatasetMetadata) => {
+    const result = classifier(dataset);
+
+    if (result.recommendedLocation !== dataset.currentLocation) {
+      await executeMigration(
+        dataset,
+        dataset.currentLocation!,
+        result.recommendedLocation,
+      );
+    }
+
+    newDataStore.push({
+      ...dataset,
+      currentLocation: result.recommendedLocation,
+    });
+  });
+
+  await fs.writeFile("./dataStore.json", JSON.stringify(newDataStore));
 }
 
 export default function classifier(

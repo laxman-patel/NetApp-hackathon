@@ -1,10 +1,19 @@
 import { readFileSync } from "fs";
+import { listMigrationJobs } from "./mock-apis/migration";
 
 Bun.serve({
   port: 3001,
 
   async fetch(req) {
     const url = new URL(req.url);
+
+    if (url.pathname === "/api/getMigrations") {
+      const migrationJobs = await listMigrationJobs();
+
+      return new Response(JSON.stringify(migrationJobs), {
+        headers: { "Content-Type": "application/json" },
+      });
+    }
 
     if (url.pathname === "/api/dashboard") {
       try {
